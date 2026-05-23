@@ -3,8 +3,11 @@ const {
   Events,
   GatewayIntentBits,
   Partials,
-  PermissionsBitField
+  PermissionsBitField,
+  SlashCommandBuilder
 } = require("discord.js");
+require("./logger");
+const { getLogs } = require("./logger");
 const { generateMentionReply } = require("./chat/localModel");
 const { config } = require("./config");
 const { shouldDeleteFlaggedMessage } = require("./moderation/actions");
@@ -27,8 +30,18 @@ const client = new Client({
   partials: [Partials.Channel, Partials.Message]
 });
 
-client.once(Events.ClientReady, (readyClient) => {
+client.once(Events.ClientReady, async (readyClient) => {
   console.log(`Logged in as ${readyClient.user.tag}`);
+
+  await readyClient.application.commands.set([
+    new SlashCommandBuilder()
+      .setName("log")
+      .setDescription("Affiche les derniers logs du bot (admin only)")
+      .addIntegerOption((opt) =>
+        opt.setName("lines").setDescription("Nombre de lignes à afficher (max 50)").setMinValue(1).setMaxValue(50)
+      )
+      .toJSON()
+  ]);
 });
 
 function moderationReplyText(result) {
@@ -225,6 +238,34 @@ client.on(Events.MessageCreate, async (message) => {
   await handleMentionReply(message).catch((error) => {
     console.error(`Failed to answer mention ${message.id}:`, error);
   });
+});
+
+client.on(Events.InteractionCreate, async (interaction) => {
+  if (!interaction.isChatInputCommand() || interaction.commandName !== "log") return;
+
+  if (!interaction.memberPermissions?.has(PermissionsBitField.Flags.ModerateMembers)) {
+    await interaction.reply({ content: "T'as pas les droits pour ça.", ephemeral: true });
+    return;
+  }
+
+  const count = interaction.options.getInteger("lines") ?? 30;
+  const lines = getLogs(count);
+
+  if (!lines.length) {
+    await interaction.reply({ content: "Aucun log pour l'instant.", ephemeral: true });
+    return;
+  }
+
+  const block = lines.join("\n");
+  const chunks = [];
+  for (let i = 0; i < block.length; i += 1900) {
+    chunks.push(block.slice(i, i + 1900));
+  }
+
+  await interaction.reply({ content: `\`\`\`\n${chunks[0]}\n\`\`\``, ephemeral: true });
+  for (const chunk of chunks.slice(1)) {
+    await interaction.followUp({ content: `\`\`\`\n${chunk}\n\`\`\``, ephemeral: true });
+  }
 });
 
 client.login(config.discordToken);
