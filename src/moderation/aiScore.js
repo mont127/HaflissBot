@@ -27,7 +27,7 @@ function buildModerationResult(scores, thresholds) {
   const reasons = [...scores.reasons];
 
   if (scores.scam >= (thresholds.scamThreshold ?? 55)) flags.push("scam");
-  if (scores.bad_speech >= (thresholds.badSpeechThreshold ?? 45)) flags.push("bad_speech");
+  if (scores.bad_speech >= (thresholds.badSpeechThreshold ?? 65)) flags.push("bad_speech");
 
   return {
     flagged: flags.length > 0,
