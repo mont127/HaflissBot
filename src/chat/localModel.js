@@ -28,7 +28,7 @@ function truncateText(text, maxChars) {
 function normalizeForCompare(text) {
   return String(text || "")
     .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[̀-ͯ]/g, "")
     .toLowerCase()
     .replace(/<@!?\d+>/g, "")
     .replace(/[^a-z0-9]+/g, "");
@@ -98,7 +98,45 @@ function postProcessAiReply({ input, output }) {
   return cleanOutput;
 }
 
-async function askLocalModel({ prompt, config, fetchImpl = fetch }) {
+async function askGemini({ prompt, config, fetchImpl = fetch }) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), config.aiReplyTimeoutMs);
+
+  try {
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${config.geminiModel}:generateContent?key=${config.geminiApiKey}`;
+
+    const response = await fetchImpl(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      signal: controller.signal,
+      body: JSON.stringify({
+        systemInstruction: { parts: [{ text: SYSTEM_PROMPT }] },
+        contents: [{ parts: [{ text: prompt }] }],
+        generationConfig: {
+          temperature: 0.8,
+          maxOutputTokens: 180
+        }
+      })
+    });
+
+    if (response.status === 429 || response.status === 503) {
+      const body = await response.text().catch(() => "");
+      throw new Error(`Gemini ${response.status} (quota/unavailable)${body ? `: ${body.slice(0, 80)}` : ""}`);
+    }
+
+    if (!response.ok) {
+      const body = await response.text().catch(() => "");
+      throw new Error(`Gemini ${response.status}${body ? `: ${body.slice(0, 120)}` : ""}`);
+    }
+
+    const payload = await response.json();
+    return String(payload?.candidates?.[0]?.content?.parts?.[0]?.text || "").trim();
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function askOllama({ prompt, config, fetchImpl = fetch }) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), config.aiReplyTimeoutMs);
 
@@ -131,6 +169,18 @@ async function askLocalModel({ prompt, config, fetchImpl = fetch }) {
   } finally {
     clearTimeout(timeout);
   }
+}
+
+async function askLocalModel({ prompt, config, fetchImpl = fetch }) {
+  if (config.geminiApiKey) {
+    try {
+      return await askGemini({ prompt, config, fetchImpl });
+    } catch (error) {
+      console.warn(`Gemini chat failed, falling back to Ollama: ${error.message}`);
+    }
+  }
+
+  return await askOllama({ prompt, config, fetchImpl });
 }
 
 async function generateMentionReply({ message, botUserId, config, fetchImpl }) {

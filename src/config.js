@@ -40,6 +40,8 @@ const config = {
   customBadSpeechTerms: listFromEnv("CUSTOM_BAD_SPEECH_TERMS"),
   deleteBadSpeechMessages: booleanFromEnv("DELETE_BAD_SPEECH_MESSAGES", false),
   enableAiReplies: booleanFromEnv("ENABLE_AI_REPLIES", true),
+  geminiApiKey: process.env.GEMINI_API || "",
+  geminiModel: process.env.GEMINI_MODEL || "gemini-2.0-flash",
   ollamaUrl: process.env.OLLAMA_URL || "http://127.0.0.1:11434",
   ollamaModel: process.env.OLLAMA_MODEL || "qwen2.5-coder:0.5b",
   aiReplyTimeoutMs: numberFromEnv("AI_REPLY_TIMEOUT_MS", 12000),

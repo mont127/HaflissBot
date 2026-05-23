@@ -40,12 +40,47 @@ function buildModerationResult(scores, thresholds) {
   };
 }
 
-async function analyzeTextWithAI(text, config, thresholds = {}, fetchImpl = fetch) {
-  const content = String(text || "").trim();
-  if (!content) {
-    return { flagged: false, flags: [], score: 0, reasons: [], summary: "message vide" };
-  }
+async function analyzeWithGemini(content, config, fetchImpl) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), config.aiReplyTimeoutMs ?? 12000);
 
+  try {
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${config.geminiModel}:generateContent?key=${config.geminiApiKey}`;
+
+    const response = await fetchImpl(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      signal: controller.signal,
+      body: JSON.stringify({
+        systemInstruction: { parts: [{ text: MODERATION_SYSTEM_PROMPT }] },
+        contents: [{ parts: [{ text: content.slice(0, 800) }] }],
+        generationConfig: {
+          temperature: 0.1,
+          maxOutputTokens: 120,
+          responseMimeType: "application/json"
+        }
+      })
+    });
+
+    if (response.status === 429 || response.status === 503) {
+      const body = await response.text().catch(() => "");
+      throw new Error(`Gemini ${response.status} (quota/unavailable)${body ? `: ${body.slice(0, 80)}` : ""}`);
+    }
+
+    if (!response.ok) {
+      const body = await response.text().catch(() => "");
+      throw new Error(`Gemini ${response.status}${body ? `: ${body.slice(0, 120)}` : ""}`);
+    }
+
+    const payload = await response.json();
+    const raw = String(payload?.candidates?.[0]?.content?.parts?.[0]?.text || "").trim();
+    return parseAiScoreResponse(raw);
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function analyzeWithOllama(content, config, fetchImpl) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), config.aiReplyTimeoutMs ?? 12000);
 
@@ -76,13 +111,33 @@ async function analyzeTextWithAI(text, config, thresholds = {}, fetchImpl = fetc
 
     const payload = await response.json();
     const raw = String(payload?.message?.content || payload?.response || "").trim();
-    const scores = parseAiScoreResponse(raw);
+    return parseAiScoreResponse(raw);
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function analyzeTextWithAI(text, config, thresholds = {}, fetchImpl = fetch) {
+  const content = String(text || "").trim();
+  if (!content) {
+    return { flagged: false, flags: [], score: 0, reasons: [], summary: "message vide" };
+  }
+
+  if (config.geminiApiKey) {
+    try {
+      const scores = await analyzeWithGemini(content, config, fetchImpl);
+      return buildModerationResult(scores, thresholds);
+    } catch (error) {
+      console.warn(`Gemini moderation failed, falling back to Ollama: ${error.message}`);
+    }
+  }
+
+  try {
+    const scores = await analyzeWithOllama(content, config, fetchImpl);
     return buildModerationResult(scores, thresholds);
   } catch (error) {
     console.warn(`AI moderation failed, falling back to regex: ${error.message}`);
     return null;
-  } finally {
-    clearTimeout(timeout);
   }
 }
 
